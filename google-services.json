@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "883459924725",
+    "project_id": "rozkaam-d26f8",
+    "storage_bucket": "rozkaam-d26f8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:883459924725:android:843cea0d60bc45437e5bbc",
+        "android_client_info": {
+          "package_name": "com.rozkaam.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAiCq9JEJjjApRmhxjWoYNvAmBYFtRYNx4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

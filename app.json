@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Rozkaam",
+    "slug": "rozkaam-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "rozkaamapp",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "googleServicesFile": "./google-services.json",
+      "package": "com.rozkaam.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you upload ID documents and selfie.",
+          "cameraPermission": "The app accesses your camera to take live photos of ID cards and selfie."
+        }
+      ],
+      "expo-status-bar",
+      "expo-splash-screen",
+      "expo-web-browser",
+      "expo-image"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "749328e9-5e89-4b86-b418-9f97ed90cbb9"
+      }
+    }
+  }
+}

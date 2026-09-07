@@ -11,12 +11,18 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../../constants/firebaseConfig";
+import {
+  sendFirebaseOtp,
+  verifyFirebaseOtp,
+  parseAuthErrorMessage,
+} from "../../services/nativeAuthService";
 
 export default function CompanyLoginScreen() {
   const [emailOrPhone, setEmailOrPhone] = useState("");
@@ -30,6 +36,7 @@ export default function CompanyLoginScreen() {
   const [resetOtp, setResetOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [resendTimer, setResendTimer] = useState<number>(0);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const translateYAnim = useRef(new Animated.Value(20)).current;
@@ -48,6 +55,17 @@ export default function CompanyLoginScreen() {
       }),
     ]).start();
   }, []);
+
+  // Countdown timer for OTP resend
+  useEffect(() => {
+    let interval: any;
+    if (resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [resendTimer]);
 
   const handleLogin = async () => {
     const inputVal = emailOrPhone.trim();
@@ -79,7 +97,7 @@ export default function CompanyLoginScreen() {
       if (!docSnap.exists()) {
         Alert.alert(
           "Account Not Registered ❌",
-          "No account found with this number. Pehle Register Karo!",
+          "No company account found with this number. Please Register!",
           [
             { text: "Register Now", onPress: () => router.push("/screen/CompanyRegister") },
             { text: "Cancel", style: "cancel" },
@@ -91,7 +109,7 @@ export default function CompanyLoginScreen() {
       const data = docSnap.data();
 
       if (data.password && data.password !== password) {
-        Alert.alert("Wrong Password ❌", "Incorrect password. Agar bhool gaye hain toh 'Forgot Password?' par click karein.");
+        Alert.alert("Wrong Password ❌", "Incorrect password. If forgot, tap 'Forgot Password?'");
         return;
       }
 
@@ -109,20 +127,17 @@ export default function CompanyLoginScreen() {
             }),
         },
       ]);
-    } catch (error) {
+    } catch (error: any) {
       setLoading(false);
+      const errorMsg = parseAuthErrorMessage(error);
       Alert.alert(
-        "Account Not Found ❌",
-        "Aapka account register nahi mila. Pehle Register karo!",
-        [
-          { text: "Register Now", onPress: () => router.push("/screen/CompanyRegister") },
-          { text: "Try Again", style: "cancel" },
-        ]
+        "Login Error ❌",
+        errorMsg || "Unable to connect to database. Please check your connection."
       );
     }
   };
 
-  // Forgot Password Actions
+  // Real SMS OTP via 2Factor.in for Reset Password
   const handleSendResetOTP = async () => {
     const cleanPhone = resetPhone.replace(/[^0-9]/g, "").slice(-10);
     if (cleanPhone.length !== 10) {
@@ -131,32 +146,49 @@ export default function CompanyLoginScreen() {
     }
 
     setLoading(true);
-    let docRef = doc(db, "companies", cleanPhone);
-    let docSnap = await getDoc(docRef);
+    try {
+      try {
+        let docRef = doc(db, "companies", cleanPhone);
+        let docSnap = await getDoc(docRef);
 
-    if (!docSnap.exists()) {
-      docRef = doc(db, "users", `COMPANY_${cleanPhone}`);
-      docSnap = await getDoc(docRef);
+        if (!docSnap.exists()) {
+          docRef = doc(db, "users", `COMPANY_${cleanPhone}`);
+          docSnap = await getDoc(docRef);
+        }
+
+        if (!docSnap.exists()) {
+          setLoading(false);
+          Alert.alert("Not Registered ❌", "This company mobile number is not registered. Please Register first!");
+          return;
+        }
+      } catch (dbErr: any) {
+        console.warn("Firestore company reset pre-check notice:", dbErr?.message);
+      }
+
+      await sendFirebaseOtp(cleanPhone);
+      setOtpSent(true);
+      setResendTimer(60);
+      setLoading(false);
+
+      Alert.alert(
+        "SMS OTP Dispatched 📱",
+        `A 6-digit password reset OTP has been sent via SMS to +91 ${cleanPhone}.`
+      );
+    } catch (error: any) {
+      setLoading(false);
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Failed to Send SMS OTP ❌", errorMsg);
     }
-
-    setLoading(false);
-
-    if (!docSnap.exists()) {
-      Alert.alert("Not Registered ❌", "Yeh number registered nahi hai. Pehle register karo!");
-      return;
-    }
-
-    setOtpSent(true);
-    Alert.alert("OTP Sent 📱", `OTP sent to +91 ${cleanPhone}. (Use 123456 for testing)`);
   };
 
   const handleResetPassword = async () => {
-    if (resetOtp.trim() !== "123456") {
-      Alert.alert("Invalid OTP", "Please enter correct 6-digit OTP.");
+    const cleanOtp = resetOtp.trim().replace(/[^0-9]/g, "");
+    if (cleanOtp.length !== 6) {
+      Alert.alert("Invalid OTP", "Please enter the 6-digit OTP received via SMS.");
       return;
     }
     if (newPassword.length < 8) {
-      Alert.alert("Weak Password", "New password must be at least 8 characters.");
+      Alert.alert("Weak Password", "New password must be at least 8 characters long.");
       return;
     }
 
@@ -164,6 +196,8 @@ export default function CompanyLoginScreen() {
     const cleanPhone = resetPhone.replace(/[^0-9]/g, "").slice(-10);
 
     try {
+      await verifyFirebaseOtp(cleanOtp, cleanPhone);
+
       const compRef = doc(db, "companies", cleanPhone);
       const userRef = doc(db, "users", `COMPANY_${cleanPhone}`);
 
@@ -171,24 +205,27 @@ export default function CompanyLoginScreen() {
       await updateDoc(userRef, { password: newPassword }).catch(() => {});
 
       setLoading(false);
-      Alert.alert("Password Updated 🎉", "Password changed successfully! Ab naye password se login karo.", [
+      Alert.alert("Password Updated 🎉", "Password changed successfully! You can now log in with your new password.", [
         {
           text: "Login Now",
           onPress: () => {
             setIsForgotMode(false);
             setOtpSent(false);
+            setPassword(newPassword);
+            setEmailOrPhone(cleanPhone);
           },
         },
       ]);
-    } catch (e) {
+    } catch (e: any) {
       setLoading(false);
-      Alert.alert("Error", "Failed to update password. Try again.");
+      const errorMsg = parseAuthErrorMessage(e);
+      Alert.alert("Reset Failed ❌", errorMsg);
     }
   };
 
   return (
     <LinearGradient
-      colors={["#030712", "#0F172A", "#052E16", "#14532D"]}
+      colors={["#030712", "#0F172A", "#1E3A8A", "#172554"]}
       locations={[0, 0.4, 0.8, 1]}
       style={styles.container}
     >
@@ -205,14 +242,38 @@ export default function CompanyLoginScreen() {
                 { opacity: fadeAnim, transform: [{ translateY: translateYAnim }] },
               ]}
             >
+              {/* Top Navigation Row */}
+              <View style={styles.topNavRow}>
+                <TouchableOpacity
+                  style={styles.backRoleBtn}
+                  onPress={() => router.replace("/screen/AuthSelection" as any)}
+                >
+                  <Text style={styles.backRoleBtnText}>← All Roles</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.switchRoleBadge}
+                  onPress={() => router.replace("/screen/WorkerLogin")}
+                >
+                  <Text style={styles.switchRoleBadgeText}>👷 Worker Login →</Text>
+                </TouchableOpacity>
+              </View>
+
               <View style={styles.headerContainer}>
+                <View style={styles.logoBadge}>
+                  <Image
+                    source={require("../../../assets/images/rozkaam-logo.jpg")}
+                    style={styles.logoImage}
+                    resizeMode="contain"
+                  />
+                </View>
                 <Text style={styles.title}>
                   {isForgotMode ? "Reset Password" : "Company Login"}
                 </Text>
                 <Text style={styles.subtitle}>
                   {isForgotMode
-                    ? "Verify mobile number to set a new password"
-                    : "Hire verified workforce for your business instantly"}
+                    ? "Verify registered details via SMS OTP to set a new password"
+                    : "Hire verified daily workers instantly • RozKaam"}
                 </Text>
               </View>
 
@@ -286,16 +347,36 @@ export default function CompanyLoginScreen() {
                     {otpSent && (
                       <>
                         <View style={styles.inputGroup}>
-                          <Text style={styles.label}>Enter 6-Digit OTP</Text>
+                          <Text style={styles.label}>Enter 6-Digit SMS OTP</Text>
                           <TextInput
-                            style={styles.input}
-                            placeholder="123456"
+                            style={styles.otpInput}
+                            placeholder="• • • • • •"
                             placeholderTextColor="#64748B"
                             keyboardType="numeric"
                             maxLength={6}
                             value={resetOtp}
                             onChangeText={setResetOtp}
                           />
+                          <View style={styles.resendRow}>
+                            <Text style={styles.resendInfo}>
+                              Didn't receive SMS OTP?{" "}
+                            </Text>
+                            <TouchableOpacity
+                              disabled={resendTimer > 0 || loading}
+                              onPress={handleSendResetOTP}
+                            >
+                              <Text
+                                style={[
+                                  styles.resendLink,
+                                  (resendTimer > 0 || loading) && styles.resendDisabled,
+                                ]}
+                              >
+                                {resendTimer > 0
+                                  ? `Resend in ${resendTimer}s`
+                                  : "Resend OTP"}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
 
                         <View style={styles.inputGroup}>
@@ -357,7 +438,48 @@ const styles = StyleSheet.create({
   keyboardView: { flex: 1 },
   content: { flex: 1, justifyContent: "center" },
   animatedWrapper: { width: "100%" },
-  headerContainer: { marginBottom: 28, alignItems: "center" },
+  topNavRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  backRoleBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
+  backRoleBtnText: { color: "#CBD5E1", fontSize: 12, fontWeight: "700" },
+  switchRoleBadge: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: "rgba(22, 163, 74, 0.25)",
+    borderWidth: 1,
+    borderColor: "rgba(74, 222, 128, 0.4)",
+  },
+  switchRoleBadgeText: { color: "#86EFAC", fontSize: 12, fontWeight: "700" },
+  headerContainer: { marginBottom: 20, alignItems: "center" },
+  logoBadge: {
+    width: 76,
+    height: 76,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    padding: 5,
+    marginBottom: 14,
+    shadowColor: "#60A5FA",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 8,
+    overflow: "hidden",
+  },
+  logoImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 14,
+  },
   title: { color: "#FFFFFF", fontSize: 32, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { color: "#94A3B8", fontSize: 13, textAlign: "center", marginTop: 6 },
   glassCard: {
@@ -384,6 +506,28 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
   },
+  otpInput: {
+    backgroundColor: "rgba(30, 58, 138, 0.6)",
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#60A5FA",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: 6,
+    textAlign: "center",
+  },
+  resendRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  resendInfo: { color: "#94A3B8", fontSize: 13 },
+  resendLink: { color: "#60A5FA", fontSize: 13, fontWeight: "700" },
+  resendDisabled: { color: "#64748B" },
   rowBtn: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
   forgotText: { color: "#60A5FA", fontSize: 13, fontWeight: "600" },
   togglePasswordText: { color: "#4ADE80", fontSize: 13, fontWeight: "600" },

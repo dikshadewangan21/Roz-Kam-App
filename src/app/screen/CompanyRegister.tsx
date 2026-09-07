@@ -20,26 +20,30 @@ import { router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "../../constants/firebaseConfig";
+import {
+  sendFirebaseOtp,
+  verifyFirebaseOtp,
+  parseAuthErrorMessage,
+} from "../../services/nativeAuthService";
 
 export default function CompanyRegisterScreen() {
   const [step, setStep] = useState<1 | 2>(1);
 
-  // Form Fields
+  // Form Fields (Step 1)
   const [companyName, setCompanyName] = useState("");
   const [mobileNumber, setMobileNumber] = useState("");
   const [emailAddress, setEmailAddress] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  // Step 2: Business Verification Fields
+  // OTP Fields
+  const [mobileOtp, setMobileOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [resendTimer, setResendTimer] = useState<number>(0);
+
+  // Form Fields (Step 2 - Verification)
   const [gstin, setGstin] = useState("");
   const [businessDocUri, setBusinessDocUri] = useState<string | null>(null);
-
-  // OTP States
-  const [mobileOtp, setMobileOtp] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [isVerified, setIsVerified] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -60,6 +64,17 @@ export default function CompanyRegisterScreen() {
     ]).start();
   }, []);
 
+  // Countdown timer for OTP resend
+  useEffect(() => {
+    let interval: any;
+    if (resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [resendTimer]);
+
   // Government GSTIN Regex Validation (15 Chars)
   const validateGSTIN = (gst: string) => {
     const regex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
@@ -69,7 +84,8 @@ export default function CompanyRegisterScreen() {
   // Image Picker / Camera for Business Document
   const pickOrCaptureDocument = async () => {
     const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
-    const mediaPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const mediaPermission =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!cameraPermission.granted && !mediaPermission.granted) {
       Alert.alert("Permission Required", "Camera and photo access is needed.");
@@ -111,7 +127,7 @@ export default function CompanyRegisterScreen() {
     );
   };
 
-  // Step 1: Send OTPs & Check Existing Company
+  // Step 1: Send Real SMS OTP via 2Factor.in
   const handleSendOtps = async () => {
     if (!companyName.trim()) {
       Alert.alert("Validation Error", "Please enter your company / organization name.");
@@ -138,42 +154,81 @@ export default function CompanyRegisterScreen() {
     setLoading(true);
 
     try {
-      // Check if Company already exists
-      const companyRef = doc(db, "companies", cleanPhone);
-      const companySnap = await getDoc(companyRef);
+      // Check if Company already exists (with graceful fallback if Firestore is unavailable)
+      try {
+        const companyRef = doc(db, "companies", cleanPhone);
+        const companySnap = await getDoc(companyRef);
 
-      if (companySnap.exists()) {
-        setLoading(false);
-        Alert.alert("Already Registered ❌", "This company mobile number is already registered. Please Login!");
-        router.replace("/screen/CompanyLogin");
-        return;
+        if (companySnap.exists()) {
+          setLoading(false);
+          Alert.alert("Already Registered ❌", "This company mobile number is already registered. Please Login!", [
+            { text: "Go to Login", onPress: () => router.replace("/screen/CompanyLogin") },
+          ]);
+          return;
+        }
+      } catch (dbErr: any) {
+        console.warn("Firestore company pre-check notice:", dbErr?.message);
       }
 
-      setLoading(false);
+      // Send Real SMS OTP via 2Factor SMS service
+      await sendFirebaseOtp(cleanPhone);
       setOtpSent(true);
-      Alert.alert(
-        "OTPs Dispatched 📩",
-        `Verification codes sent to:\n• Mobile: +91 ${cleanPhone}\n• Email: ${emailAddress.trim()}\n\n(Use 123456 for testing)`
-      );
-    } catch (error) {
+      setResendTimer(60);
       setLoading(false);
-      Alert.alert("Server Error", "Failed to send verification codes. Try again.");
+
+      Alert.alert(
+        "SMS OTP Dispatched 📩",
+        `A 6-digit SMS OTP has been sent to +91 ${cleanPhone}. Please enter it below.`
+      );
+    } catch (error: any) {
+      setLoading(false);
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Failed to Send SMS OTP ❌", errorMsg);
     }
   };
 
-  // Step 2: Verify Dual OTPs
-  const handleVerifyOtps = () => {
-    const isMobileValid = mobileOtp.trim() === "123456" || mobileOtp.trim().length === 6;
-    const isEmailValid = emailOtp.trim() === "123456" || emailOtp.trim().length === 6;
+  // Resend OTP Action
+  const handleResendOtp = async () => {
+    if (resendTimer > 0 || loading) return;
+    const cleanPhone = mobileNumber.replace(/[^0-9]/g, "").slice(-10);
+    setLoading(true);
+    try {
+      await sendFirebaseOtp(cleanPhone);
+      setResendTimer(60);
+      setLoading(false);
+      Alert.alert(
+        "SMS OTP Resent 📩",
+        `A new 6-digit verification code has been dispatched via SMS to +91 ${cleanPhone}.`
+      );
+    } catch (error: any) {
+      setLoading(false);
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Resend Failed ❌", errorMsg);
+    }
+  };
 
-    if (!isMobileValid || !isEmailValid) {
-      Alert.alert("Invalid OTP", "Please enter valid 6-digit OTPs for both Mobile and Email.");
+  // Step 2: Verify Real SMS OTP
+  const handleVerifyOtps = async () => {
+    const cleanOtp = mobileOtp.trim().replace(/[^0-9]/g, "");
+
+    if (cleanOtp.length !== 6) {
+      Alert.alert("Invalid OTP", "Please enter the 6-digit SMS OTP.");
       return;
     }
 
-    setIsVerified(true);
-    Alert.alert("Verified ✅", "Mobile and Email verified! Proceeding to Business Details.");
-    setStep(2);
+    setLoading(true);
+
+    const cleanPhone = mobileNumber.replace(/[^0-9]/g, "").slice(-10);
+    try {
+      await verifyFirebaseOtp(cleanOtp, cleanPhone);
+      setLoading(false);
+      Alert.alert("Verified ✅", "Mobile verified! Proceeding to Business Details.");
+      setStep(2);
+    } catch (error: any) {
+      setLoading(false);
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Verification Failed ❌", errorMsg);
+    }
   };
 
   // Step 3: Complete Company Registration
@@ -203,6 +258,7 @@ export default function CompanyRegisterScreen() {
       await setDoc(doc(db, "companies", cleanPhone), {
         companyName: companyName.trim(),
         mobileNumber: `+91 ${cleanPhone}`,
+        phoneNumber: cleanPhone,
         emailAddress: emailAddress.trim(),
         gstin: cleanGST,
         businessDocUri: businessDocUri,
@@ -220,9 +276,10 @@ export default function CompanyRegisterScreen() {
           onPress: () => router.replace("/screen/CompanyLogin"),
         },
       ]);
-    } catch (error) {
+    } catch (error: any) {
       setLoading(false);
-      Alert.alert("Database Error", "Failed to save company profile.");
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Database Error", errorMsg || "Failed to save company profile. Please try again.");
     }
   };
 
@@ -252,11 +309,18 @@ export default function CompanyRegisterScreen() {
               ]}
             >
               <View style={styles.headerContainer}>
+                <View style={styles.logoBadge}>
+                  <Image
+                    source={require("../../../assets/images/rozkaam-logo.jpg")}
+                    style={styles.logoImage}
+                    resizeMode="contain"
+                  />
+                </View>
                 <Text style={styles.title}>Company Registration</Text>
                 <Text style={styles.subtitle}>
                   {step === 1
-                    ? "Register business details & verify contact info"
-                    : "Upload Business Documents & GSTIN for Fraud Prevention"}
+                    ? "Register business details & verify contact info • RozKaam"
+                    : "Upload Business Documents & GSTIN • RozKaam"}
                 </Text>
               </View>
 
@@ -330,37 +394,40 @@ export default function CompanyRegisterScreen() {
                     </View>
 
                     {otpSent && (
-                      <>
-                        <View style={styles.inputGroup}>
-                          <Text style={[styles.label, { color: "#60A5FA" }]}>
-                            ENTER MOBILE OTP
+                      <View style={styles.inputGroup}>
+                        <Text style={[styles.label, { color: "#60A5FA" }]}>
+                          ENTER 6-DIGIT SMS OTP
+                        </Text>
+                        <TextInput
+                          style={styles.otpInput}
+                          placeholder="• • • • • •"
+                          placeholderTextColor="#64748B"
+                          keyboardType="numeric"
+                          maxLength={6}
+                          value={mobileOtp}
+                          onChangeText={setMobileOtp}
+                        />
+                        <View style={styles.resendRow}>
+                          <Text style={styles.resendInfo}>
+                            Didn't receive SMS OTP?{" "}
                           </Text>
-                          <TextInput
-                            style={styles.otpInput}
-                            placeholder="• • • • • •"
-                            placeholderTextColor="#64748B"
-                            keyboardType="numeric"
-                            maxLength={6}
-                            value={mobileOtp}
-                            onChangeText={setMobileOtp}
-                          />
+                          <TouchableOpacity
+                            disabled={resendTimer > 0 || loading}
+                            onPress={handleResendOtp}
+                          >
+                            <Text
+                              style={[
+                                styles.resendLink,
+                                (resendTimer > 0 || loading) && styles.resendDisabled,
+                              ]}
+                            >
+                              {resendTimer > 0
+                                ? `Resend in ${resendTimer}s`
+                                : "Resend OTP"}
+                            </Text>
+                          </TouchableOpacity>
                         </View>
-
-                        <View style={styles.inputGroup}>
-                          <Text style={[styles.label, { color: "#60A5FA" }]}>
-                            ENTER EMAIL OTP
-                          </Text>
-                          <TextInput
-                            style={styles.otpInput}
-                            placeholder="• • • • • •"
-                            placeholderTextColor="#64748B"
-                            keyboardType="numeric"
-                            maxLength={6}
-                            value={emailOtp}
-                            onChangeText={setEmailOtp}
-                          />
-                        </View>
-                      </>
+                      </View>
                     )}
 
                     {!otpSent ? (
@@ -373,7 +440,9 @@ export default function CompanyRegisterScreen() {
                         {loading ? (
                           <ActivityIndicator color="#FFFFFF" />
                         ) : (
-                          <Text style={styles.registerBtnText}>Send Mobile & Email OTP 👍</Text>
+                          <Text style={styles.registerBtnText}>
+                            Send Mobile OTP 📱
+                          </Text>
                         )}
                       </TouchableOpacity>
                     ) : (
@@ -383,9 +452,13 @@ export default function CompanyRegisterScreen() {
                         onPress={handleVerifyOtps}
                         disabled={loading}
                       >
-                        <Text style={styles.registerBtnText}>
-                          Verify OTPs & Proceed →
-                        </Text>
+                        {loading ? (
+                          <ActivityIndicator color="#FFFFFF" />
+                        ) : (
+                          <Text style={styles.registerBtnText}>
+                            Verify OTP & Proceed →
+                          </Text>
+                        )}
                       </TouchableOpacity>
                     )}
                   </>
@@ -396,7 +469,7 @@ export default function CompanyRegisterScreen() {
                     <View style={styles.inputGroup}>
                       <Text style={styles.label}>15-Character Government GSTIN</Text>
                       <TextInput
-                        style={[styles.input, { borderColor: "#EF4444" }]}
+                        style={[styles.input, { borderColor: "#60A5FA" }]}
                         placeholder="e.g. 27AAAAA0000A1Z5"
                         placeholderTextColor="#64748B"
                         autoCapitalize="characters"
@@ -476,6 +549,25 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 24, paddingVertical: 20 },
   content: { flex: 1, justifyContent: "center" },
   headerContainer: { marginBottom: 24, alignItems: "center" },
+  logoBadge: {
+    width: 68,
+    height: 68,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    padding: 4,
+    marginBottom: 12,
+    shadowColor: "#60A5FA",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 8,
+    overflow: "hidden",
+  },
+  logoImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 12,
+  },
   title: { color: "#FFFFFF", fontSize: 28, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { color: "#94A3B8", fontSize: 13, textAlign: "center", marginTop: 6, lineHeight: 18 },
   formCard: {
@@ -517,6 +609,15 @@ const styles = StyleSheet.create({
     letterSpacing: 6,
     textAlign: "center",
   },
+  resendRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  resendInfo: { color: "#94A3B8", fontSize: 13 },
+  resendLink: { color: "#60A5FA", fontSize: 13, fontWeight: "700" },
+  resendDisabled: { color: "#64748B" },
   uploadCard: {
     backgroundColor: "rgba(15, 23, 42, 0.6)",
     borderRadius: 16,

@@ -6,6 +6,7 @@ import {
   Animated,
   StatusBar,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -45,9 +46,9 @@ export default function AppSplashScreen() {
 
     prepareAndAnimate();
 
-    // 2.5 seconds baad main screen par replace ho jayega
+    // 2.5 seconds baad main role selection screen par replace ho jayega
     const timer = setTimeout(() => {
-      router.replace("/screen/WorkerLogin");
+      router.replace("/screen/AuthSelection" as any);
     }, 2500);
 
     return () => clearTimeout(timer);
@@ -71,9 +72,13 @@ export default function AppSplashScreen() {
               },
             ]}
           >
-            {/* App Branding Icon */}
-            <View style={styles.iconCircle}>
-              <Text style={styles.logoIcon}>💼</Text>
+            {/* App Branding Logo */}
+            <View style={styles.logoCircle}>
+              <Image
+                source={require("../../assets/images/rozkaam-logo.jpg")}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
             </View>
 
             {/* App Main Title */}
@@ -82,7 +87,7 @@ export default function AppSplashScreen() {
             </Text>
 
             {/* Tagline */}
-            <Text style={styles.tagline}>Aapka Bharosemand Job Partner</Text>
+            <Text style={styles.tagline}>Aaj Kaam, Aaj Paisa</Text>
             <Text style={styles.subTagline}>Connecting Workers & Employers</Text>
           </Animated.View>
         </View>
@@ -115,21 +120,26 @@ const styles = StyleSheet.create({
   logoBox: {
     alignItems: "center",
   },
-  iconCircle: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: "rgba(22, 163, 74, 0.2)",
-    borderWidth: 2,
-    borderColor: "#4ADE80",
+  logoCircle: {
+    width: 130,
+    height: 130,
+    borderRadius: 28,
+    backgroundColor: "#FFFFFF",
+    padding: 8,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 20,
     shadowColor: "#4ADE80",
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 10,
+    shadowOpacity: 0.6,
+    shadowRadius: 24,
+    elevation: 12,
+    overflow: "hidden",
+  },
+  logoImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 20,
   },
   logoIcon: {
     fontSize: 42,

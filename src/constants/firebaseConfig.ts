@@ -1,18 +1,18 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { initializeAuth, getAuth, inMemoryPersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyA2DdiCnDPC_OK2xkCp2QwNSUj6okXKimk",
-  authDomain: "rozkaam-d26f8.firebaseapp.com",
-  projectId: "rozkaam-d26f8",
-  storageBucket: "rozkaam-d26f8.firebasestorage.app",
-  messagingSenderId: "883459924725",
-  appId: "1:883459924725:web:c2da8245d6a3d1707e5bbc",
-  measurementId: "G-P9VPCBHX6N"
+  apiKey: "AIzaSyCiWCcIEJaVV6LPrD0c_0sPBmQwkk95OcQ",
+  authDomain: "rozkaam-fd58e.firebaseapp.com",
+  projectId: "rozkaam-fd58e",
+  storageBucket: "rozkaam-fd58e.firebasestorage.app",
+  messagingSenderId: "75608676476",
+  appId: "1:75608676476:android:f0a38be965a0c522e311f9",
 };
 
-// Hot reload par duplication se bachne ke liye logic
+// Prevent duplicate initialization on hot reload
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 export const auth = (() => {
@@ -26,5 +26,6 @@ export const auth = (() => {
 })();
 
 export const db = getFirestore(app);
+export const functions = getFunctions(app);
 
-export default app;
+export default app;

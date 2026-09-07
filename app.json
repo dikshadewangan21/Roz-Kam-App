@@ -4,13 +4,19 @@
     "slug": "rozkaam-app",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
     "scheme": "rozkaamapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": false,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "icon": "./assets/images/icon.png"
     },
     "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/adaptive-icon.png"
+      },
       "googleServicesFile": "./google-services.json",
       "package": "com.rozkaam.app",
       "permissions": [
@@ -28,6 +34,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow RozKaam to access your camera to scan worker QR codes for attendance."
+        }
+      ],
       [
         "expo-image-picker",
         {

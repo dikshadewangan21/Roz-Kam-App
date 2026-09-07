@@ -9,6 +9,7 @@ import {
   SafeAreaView,
   ActivityIndicator,
   Alert,
+  Image,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { collection, onSnapshot } from "firebase/firestore";
@@ -132,11 +133,20 @@ export default function WorkerDashboard() {
 
       {/* Top Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.welcomeText}>
-            Welcome, {userName.split(" ")[0]} 👋
-          </Text>
-          <Text style={styles.headerSubtitle}>Rozkaam, Rozpaisa</Text>
+        <View style={styles.headerLeft}>
+          <View style={styles.headerLogoContainer}>
+            <Image
+              source={require("../../../assets/images/rozkaam-logo.jpg")}
+              style={styles.headerLogoImage}
+              resizeMode="contain"
+            />
+          </View>
+          <View style={{ marginLeft: 10 }}>
+            <Text style={styles.welcomeText}>
+              Welcome, {userName.split(" ")[0]} 👋
+            </Text>
+            <Text style={styles.headerSubtitle}>Aaj Kaam, Aaj Paisa</Text>
+          </View>
         </View>
 
         <TouchableOpacity
@@ -206,10 +216,34 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingVertical: 12,
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
     borderBottomColor: "#E2E8F0",
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  headerLogoContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    padding: 3,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    overflow: "hidden",
+  },
+  headerLogoImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 9,
   },
   welcomeText: { fontSize: 18, fontWeight: "800", color: "#0F172A" },
   headerSubtitle: { fontSize: 11, color: "#64748B", fontWeight: "600", marginTop: 2 },

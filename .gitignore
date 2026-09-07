@@ -45,7 +45,10 @@ example
 # Build outputs & local configuration
 .cxx/
 build/
+*.apk
 android/app/build/
 android/.cxx/
 android/app/.cxx/
 android/local.properties
+backend/node_modules/
+backend/.env

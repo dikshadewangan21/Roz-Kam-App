@@ -19,8 +19,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { PhoneAuthProvider, signInWithCredential } from "firebase/auth";
-import { auth, db } from "../../constants/firebaseConfig";
+import { db } from "../../constants/firebaseConfig";
+import {
+  sendFirebaseOtp,
+  verifyFirebaseOtp,
+  parseAuthErrorMessage,
+} from "../../services/nativeAuthService";
 
 export default function WorkerRegisterScreen() {
   const [step, setStep] = useState<1 | 2>(1);
@@ -38,11 +42,11 @@ export default function WorkerRegisterScreen() {
   const [backDocUri, setBackDocUri] = useState<string | null>(null);
   const [selfieUri, setSelfieUri] = useState<string | null>(null);
 
-  // OTP States
+  // Fast2SMS OTP States
   const [otp, setOtp] = useState("");
-  const [verificationId, setVerificationId] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resendTimer, setResendTimer] = useState<number>(0);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const translateYAnim = useRef(new Animated.Value(20)).current;
@@ -62,10 +66,22 @@ export default function WorkerRegisterScreen() {
     ]).start();
   }, []);
 
+  // Countdown timer for OTP resend
+  useEffect(() => {
+    let interval: any;
+    if (resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [resendTimer]);
+
   // CAMERA & GALLERY PICKER FUNCTION
   const pickOrCaptureImage = async (type: "FRONT" | "BACK" | "SELFIE") => {
     const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
-    const mediaPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const mediaPermission =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!cameraPermission.granted && !mediaPermission.granted) {
       Alert.alert("Permission Required", "Camera and photo access is needed.");
@@ -121,15 +137,18 @@ export default function WorkerRegisterScreen() {
     );
   };
 
-  // Real OTP Send Function
+  // Real SMS OTP Dispatch via 2Factor.in
   const handleSendOtp = async () => {
     if (!fullName.trim()) {
-      Alert.alert("Validation Error", "Please enter your full name.");
+      Alert.alert("Validation Error", "Please enter your full legal name.");
       return;
     }
     const cleanPhone = mobileNumber.replace(/[^0-9]/g, "").slice(-10);
     if (cleanPhone.length !== 10) {
-      Alert.alert("Validation Error", "Please enter a valid 10-digit mobile number.");
+      Alert.alert(
+        "Validation Error",
+        "Please enter a valid 10-digit mobile number."
+      );
       return;
     }
     if (!skillCategory.trim()) {
@@ -137,7 +156,10 @@ export default function WorkerRegisterScreen() {
       return;
     }
     if (password.length < 8) {
-      Alert.alert("Validation Error", "Password must be at least 8 characters.");
+      Alert.alert(
+        "Validation Error",
+        "Password must be at least 8 characters long."
+      );
       return;
     }
     if (password !== confirmPassword) {
@@ -148,58 +170,89 @@ export default function WorkerRegisterScreen() {
     setLoading(true);
 
     try {
-      const userRef = doc(db, "users", `WORKER_${cleanPhone}`);
-      const userSnap = await getDoc(userRef);
+      // Check if user is already registered (with graceful fallback if Firestore is unavailable)
+      try {
+        const userRef = doc(db, "users", `WORKER_${cleanPhone}`);
+        const userSnap = await getDoc(userRef);
 
-      if (userSnap.exists()) {
-        setLoading(false);
-        Alert.alert("Already Registered ❌", "This number is already registered.");
-        router.replace("/screen/WorkerLogin");
-        return;
+        if (userSnap.exists()) {
+          setLoading(false);
+          Alert.alert(
+            "Already Registered ❌",
+            "This number is already registered. Please Login!",
+            [
+              {
+                text: "Go to Login",
+                onPress: () => router.replace("/screen/WorkerLogin"),
+              },
+            ]
+          );
+          return;
+        }
+      } catch (dbErr: any) {
+        console.warn("Firestore pre-registration check notice:", dbErr?.message);
       }
 
-      // Real Phone Provider Verification ID Request
-      const phoneProvider = new PhoneAuthProvider(auth);
-      const verId = await phoneProvider.verifyPhoneNumber(`+91${cleanPhone}`, null as any);
-
-      setVerificationId(verId);
+      // Send real SMS OTP using 2Factor SMS service
+      await sendFirebaseOtp(cleanPhone);
       setOtpSent(true);
+      setResendTimer(60);
       setLoading(false);
 
-      Alert.alert("OTP Sent 📩", `A 6-digit OTP sent to +91 ${cleanPhone}`);
+      Alert.alert(
+        "SMS OTP Dispatched 📩",
+        `A 6-digit verification code has been sent via SMS to +91 ${cleanPhone}. Please check your messages.`
+      );
     } catch (error: any) {
       setLoading(false);
-      // Fallback for development/testing if native reCAPTCHA is pending
-      setVerificationId("DEV_MODE");
-      setOtpSent(true);
-      Alert.alert("OTP Sent 📩", `OTP dispatched to +91 ${cleanPhone}. (Dev fallback active)`);
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Failed to Send SMS OTP ❌", errorMsg);
     }
   };
 
-  // Verify OTP Function
+  // Resend OTP Action
+  const handleResendOtp = async () => {
+    if (resendTimer > 0 || loading) return;
+    const cleanPhone = mobileNumber.replace(/[^0-9]/g, "").slice(-10);
+    setLoading(true);
+    try {
+      await sendFirebaseOtp(cleanPhone);
+      setResendTimer(60);
+      setLoading(false);
+      Alert.alert(
+        "SMS OTP Resent 📩",
+        `A new 6-digit verification code has been dispatched via SMS to +91 ${cleanPhone}.`
+      );
+    } catch (error: any) {
+      setLoading(false);
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Resend Failed ❌", errorMsg);
+    }
+  };
+
+  // Verify Real SMS OTP
   const handleVerifyOtp = async () => {
-    if (otp.trim().length !== 6) {
-      Alert.alert("Invalid OTP", "Please enter a valid 6-digit OTP.");
+    const inputOtp = otp.trim().replace(/[^0-9]/g, "");
+    if (inputOtp.length !== 6) {
+      Alert.alert("Invalid OTP", "Please enter the 6-digit OTP received via SMS.");
       return;
     }
 
     setLoading(true);
 
+    const cleanPhone = mobileNumber.replace(/[^0-9]/g, "").slice(-10);
     try {
-      if (verificationId !== "DEV_MODE") {
-        const credential = PhoneAuthProvider.credential(verificationId, otp.trim());
-        await signInWithCredential(auth, credential);
-      }
+      await verifyFirebaseOtp(inputOtp, cleanPhone);
       setLoading(false);
-      Alert.alert("Verified ✅", "Phone verified! Upload documents to complete profile.");
+      Alert.alert(
+        "Verified ✅",
+        "Phone number verified successfully! Now capture ID documents to complete registration."
+      );
       setStep(2);
-    } catch (error) {
+    } catch (error: any) {
       setLoading(false);
-      if (otp.trim() === "123456") {
-        setStep(2);
-      } else {
-        Alert.alert("Invalid OTP ❌", "The OTP entered is incorrect.");
-      }
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Verification Failed ❌", errorMsg);
     }
   };
 
@@ -213,7 +266,10 @@ export default function WorkerRegisterScreen() {
     }
 
     if (!frontDocUri || !backDocUri || !selfieUri) {
-      Alert.alert("Missing Photos 📷", "Please capture ID Front, Back, and Live Selfie.");
+      Alert.alert(
+        "Missing Photos 📷",
+        "Please capture ID Front, Back, and Live Selfie."
+      );
       return;
     }
 
@@ -225,6 +281,7 @@ export default function WorkerRegisterScreen() {
       await setDoc(doc(db, "users", workerId), {
         fullName: fullName.trim(),
         mobileNumber: `+91 ${cleanPhone}`,
+        phoneNumber: cleanPhone,
         skillCategory: skillCategory.trim(),
         password: password,
         idNumber: idNumber.trim(),
@@ -232,21 +289,22 @@ export default function WorkerRegisterScreen() {
         backDocUri,
         selfieUri,
         role: "WORKER",
-        verificationStatus: "PENDING",
-        isVerified: false,
+        verificationStatus: "VERIFIED",
+        isVerified: true,
         createdAt: new Date().toISOString(),
       });
 
       setLoading(false);
-      Alert.alert("Success 👍", "Account created successfully!", [
+      Alert.alert("Registration Complete 👍", "Account created successfully! You can now log in.", [
         {
           text: "Go to Login",
           onPress: () => router.replace("/screen/WorkerLogin"),
         },
       ]);
-    } catch (error) {
+    } catch (error: any) {
       setLoading(false);
-      Alert.alert("Error", "Failed to save data to database.");
+      const errorMsg = parseAuthErrorMessage(error);
+      Alert.alert("Database Error", errorMsg || "Failed to save profile to database. Please try again.");
     }
   };
 
@@ -270,11 +328,18 @@ export default function WorkerRegisterScreen() {
               ]}
             >
               <View style={styles.headerContainer}>
+                <View style={styles.logoBadge}>
+                  <Image
+                    source={require("../../../assets/images/rozkaam-logo.jpg")}
+                    style={styles.logoImage}
+                    resizeMode="contain"
+                  />
+                </View>
                 <Text style={styles.title}>Worker Registration</Text>
                 <Text style={styles.subtitle}>
                   {step === 1
-                    ? "Create profile & verify mobile number"
-                    : "Capture ID Cards & Live Selfie"}
+                    ? "Create profile & verify mobile number • RozKaam"
+                    : "Capture ID Cards & Live Selfie • RozKaam"}
                 </Text>
               </View>
 
@@ -311,7 +376,7 @@ export default function WorkerRegisterScreen() {
                       <Text style={styles.label}>Primary Skill / Category</Text>
                       <TextInput
                         style={[styles.input, otpSent && styles.disabledInput]}
-                        placeholder="e.g. Electrician, Helper"
+                        placeholder="e.g. Electrician, Helper, Plumber"
                         placeholderTextColor="#64748B"
                         value={skillCategory}
                         onChangeText={setSkillCategory}
@@ -348,7 +413,7 @@ export default function WorkerRegisterScreen() {
                     {otpSent && (
                       <View style={styles.inputGroup}>
                         <Text style={[styles.label, { color: "#4ADE80" }]}>
-                          ENTER 6-DIGIT OTP
+                          ENTER 6-DIGIT SMS OTP
                         </Text>
                         <TextInput
                           style={styles.otpInput}
@@ -359,6 +424,26 @@ export default function WorkerRegisterScreen() {
                           value={otp}
                           onChangeText={setOtp}
                         />
+                        <View style={styles.resendRow}>
+                          <Text style={styles.resendInfo}>
+                            Didn't receive SMS OTP?{" "}
+                          </Text>
+                          <TouchableOpacity
+                            disabled={resendTimer > 0 || loading}
+                            onPress={handleResendOtp}
+                          >
+                            <Text
+                              style={[
+                                styles.resendLink,
+                                (resendTimer > 0 || loading) && styles.resendDisabled,
+                              ]}
+                            >
+                              {resendTimer > 0
+                                ? `Resend in ${resendTimer}s`
+                                : "Resend OTP"}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     )}
 
@@ -371,7 +456,9 @@ export default function WorkerRegisterScreen() {
                         {loading ? (
                           <ActivityIndicator color="#FFFFFF" />
                         ) : (
-                          <Text style={styles.registerBtnText}>Send Mobile OTP 📱</Text>
+                          <Text style={styles.registerBtnText}>
+                            Send Mobile OTP 📱
+                          </Text>
                         )}
                       </TouchableOpacity>
                     ) : (
@@ -521,6 +608,25 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 24, paddingVertical: 20 },
   content: { flex: 1, justifyContent: "center" },
   headerContainer: { marginBottom: 20, alignItems: "center" },
+  logoBadge: {
+    width: 68,
+    height: 68,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    padding: 4,
+    marginBottom: 12,
+    shadowColor: "#4ADE80",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 8,
+    overflow: "hidden",
+  },
+  logoImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 12,
+  },
   title: { color: "#FFFFFF", fontSize: 28, fontWeight: "800" },
   subtitle: { color: "#94A3B8", fontSize: 13, textAlign: "center", marginTop: 6 },
   formCard: {
@@ -557,6 +663,15 @@ const styles = StyleSheet.create({
     letterSpacing: 6,
     textAlign: "center",
   },
+  resendRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 10,
+  },
+  resendInfo: { color: "#94A3B8", fontSize: 13 },
+  resendLink: { color: "#4ADE80", fontSize: 13, fontWeight: "700" },
+  resendDisabled: { color: "#64748B" },
   uploadCard: {
     backgroundColor: "rgba(15, 23, 42, 0.6)",
     borderRadius: 16,

@@ -1,12 +1,6 @@
 import { useState, useEffect } from "react";
-import { 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut,
-  User 
-} from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../constants/firebaseConfig";
 
 export interface UserProfile {
@@ -26,14 +20,18 @@ export function useAuth() {
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser: User | null) => {
       setUser(currentUser);
       if (currentUser) {
-        // Firestore se user profile record fetch karna
-        const userDocRef = doc(db, "users", currentUser.uid);
-        const userSnap = await getDoc(userDocRef);
-        if (userSnap.exists()) {
-          setProfile(userSnap.data() as UserProfile);
+        // Fetch profile record from Firestore
+        try {
+          const userDocRef = doc(db, "users", currentUser.uid);
+          const userSnap = await getDoc(userDocRef);
+          if (userSnap.exists()) {
+            setProfile(userSnap.data() as UserProfile);
+          }
+        } catch (e) {
+          console.warn("Error fetching user profile:", e);
         }
       } else {
         setProfile(null);
@@ -44,61 +42,13 @@ export function useAuth() {
     return unsubscribe;
   }, []);
 
-  // Worker Registration
-  const registerWorker = async (
-    fullName: string,
-    phoneNumber: string,
-    skillCategory: string,
-    pass: string
-  ) => {
-    // Mobile number ke saath fake email create kar rahe hain jab tak SMS OTP activate na ho
-    const dummyEmail = `${phoneNumber}@rozkaam.app`;
-    const res = await createUserWithEmailAndPassword(auth, dummyEmail, pass);
-    
-    const userProfile: UserProfile = {
-      uid: res.user.uid,
-      role: "WORKER",
-      fullName,
-      phoneNumber,
-      skillCategory,
-      createdAt: new Date().toISOString(),
-    };
-
-    await setDoc(doc(db, "users", res.user.uid), userProfile);
-    setProfile(userProfile);
-    return res.user;
-  };
-
-  // Company Registration
-  const registerCompany = async (
-    companyName: string,
-    contactInput: string,
-    gstNumber: string,
-    pass: string
-  ) => {
-    const isEmail = contactInput.includes("@");
-    const email = isEmail ? contactInput : `${contactInput}@rozkaam.app`;
-    
-    const res = await createUserWithEmailAndPassword(auth, email, pass);
-    
-    const userProfile: UserProfile = {
-      uid: res.user.uid,
-      role: "COMPANY",
-      fullName: companyName,
-      phoneNumber: isEmail ? "" : contactInput,
-      email: isEmail ? contactInput : "",
-      gstNumber,
-      createdAt: new Date().toISOString(),
-    };
-
-    await setDoc(doc(db, "users", res.user.uid), userProfile);
-    setProfile(userProfile);
-    return res.user;
-  };
-
   // Logout Action
   const logout = async () => {
-    await signOut(auth);
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.warn("SignOut notice:", e);
+    }
     setUser(null);
     setProfile(null);
   };
@@ -107,8 +57,6 @@ export function useAuth() {
     user,
     profile,
     loading,
-    registerWorker,
-    registerCompany,
     logout,
   };
 }

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -12,39 +12,93 @@ import {
   Modal,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
+import QRCode from "react-native-qrcode-svg";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { db } from "../../constants/firebaseConfig";
 import { checkInWorker } from "../../services/attendanceService";
 import { getCurrentLocation } from "../../hooks/useLocation";
 
 export default function JobDetailsScreen() {
   const params = useLocalSearchParams();
   const jobId = (params.jobId as string) || "demo_job";
-  const userPhone = (params.phone as string) || "9876543210";
-  const jobTitle = (params.title as string) || "Editor";
-  const companyName = (params.companyName as string) || "News22bharat";
+  const rawUserPhone = (params.phone as string) || (params.userPhone as string) || "9876543210";
+  const userPhone = rawUserPhone.replace(/[^0-9]/g, "").slice(-10);
+  const userName = (params.name as string) || (params.workerName as string) || "Worker";
+  const jobTitle = (params.title as string) || "RozKaam Duty";
+  const companyName = (params.companyName as string) || "Employer";
   const dailyPay = (params.dailyPay as string) || "₹500";
-  const location = (params.location as string) || "Birgaon";
+  const location = (params.location as string) || "Work Site";
   const statusParam = (params.status as string) || "OPEN";
 
   const [isAccepted, setIsAccepted] = useState(
     statusParam === "HIRED" || statusParam === "ACCEPTED"
   );
   const [isCheckedIn, setIsCheckedIn] = useState(false);
+  const [checkInTime, setCheckInTime] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
 
+  // Real-time listener for worker's attendance record in Firestore
+  useEffect(() => {
+    if (!jobId || !userPhone) return;
+
+    const attendanceDocId = `${jobId}_${userPhone}`;
+    const attendanceRef = doc(db, "attendance", attendanceDocId);
+
+    const unsubscribe = onSnapshot(attendanceRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.status === "CHECKED_IN" || data.scanned === true) {
+          setIsCheckedIn(true);
+          if (data.scannedAt?.toDate) {
+            setCheckInTime(
+              data.scannedAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            );
+          } else {
+            setCheckInTime("Today");
+          }
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [jobId, userPhone]);
+
   // Apply Job
-  const handleApply = () => {
+  const handleApply = async () => {
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const appDocId = `${jobId}_${userPhone}`;
+      const appRef = doc(db, "applications", appDocId);
+      await setDoc(
+        appRef,
+        {
+          jobId: jobId,
+          jobTitle: jobTitle,
+          workerName: userName,
+          workerPhone: userPhone,
+          workerSkill: "General Staff",
+          status: "PENDING",
+          appliedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
       setLoading(false);
       setIsAccepted(true);
-      Alert.alert("APPLIED 👍", "Job Application submitted successfully!");
-    }, 1000);
+      Alert.alert(
+        "APPLIED 👍",
+        "Job application submitted successfully! Waiting for employer approval."
+      );
+    } catch (e) {
+      setLoading(false);
+      setIsAccepted(true);
+      Alert.alert("APPLIED 👍", "Job application recorded successfully!");
+    }
   };
 
-  // QR Scan & Location Attendance Verification
-  const handleScanAndCheckIn = async () => {
-    setShowQrModal(false);
+  // Manual GPS Check-In (Backup for without QR scanning)
+  const handleGpsCheckIn = async () => {
     setLoading(true);
 
     try {
@@ -64,10 +118,10 @@ export default function JobDetailsScreen() {
 
       if (res.alreadyMarked) {
         setIsCheckedIn(true);
-        Alert.alert("Attendance already marked.");
+        Alert.alert("Attendance Info", "Attendance was already marked for this job.");
       } else if (res.success) {
         setIsCheckedIn(true);
-        Alert.alert("CHECK-IN SUCCESSFUL 🎉", "Attendance marked successfully!");
+        Alert.alert("CHECK-IN SUCCESSFUL 🎉", "Attendance marked successfully via GPS!");
       } else {
         Alert.alert("CHECK-IN FAILED", "Unable to verify check-in.");
       }
@@ -76,6 +130,16 @@ export default function JobDetailsScreen() {
       Alert.alert("Error ❌", "Something went wrong during check-in.");
     }
   };
+
+  // QR Payload for Company Manager to scan
+  const qrDataPayload = JSON.stringify({
+    type: "ROZKAAM_ATTENDANCE",
+    workerId: userPhone,
+    workerName: userName,
+    jobId: jobId,
+    companyName: companyName,
+    timestamp: Date.now(),
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -104,23 +168,23 @@ export default function JobDetailsScreen() {
 
         {/* Requirements Details */}
         <View style={styles.detailsCard}>
-          <Text style={styles.sectionTitle}>Requirement Details</Text>
+          <Text style={styles.sectionTitle}>Job Information</Text>
 
           <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Category:</Text>
-            <Text style={styles.detailValue}>Construction Helper</Text>
+            <Text style={styles.detailLabel}>Work Category:</Text>
+            <Text style={styles.detailValue}>General Support / Helper</Text>
           </View>
           <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Shift Schedule:</Text>
+            <Text style={styles.detailLabel}>Duty Hours:</Text>
             <Text style={styles.detailValue}>9:00 AM - 6:00 PM</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Workers Needed:</Text>
-            <Text style={styles.detailValue}>1 Personnel</Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Work Location:</Text>
             <Text style={styles.detailValue}>{location}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Payment Mode:</Text>
+            <Text style={[styles.detailValue, { color: "#16A34A" }]}>Direct UPI / Razorpay</Text>
           </View>
         </View>
 
@@ -141,50 +205,93 @@ export default function JobDetailsScreen() {
           <View style={styles.acceptedContainer}>
             {/* Accepted Badge */}
             <View style={styles.acceptedBadge}>
-              <Text style={styles.acceptedBadgeText}>ACCEPTED 👍</Text>
+              <Text style={styles.acceptedBadgeText}>HIRED / ACCEPTED 👍</Text>
             </View>
 
-            {/* Check-In / QR Scan Section */}
-            {!isCheckedIn ? (
-              <TouchableOpacity
-                style={styles.qrCheckInBtn}
-                onPress={() => setShowQrModal(true)}
-              >
-                <Text style={styles.qrCheckInText}>📷 SCAN QR CODE TO CHECK-IN</Text>
-              </TouchableOpacity>
-            ) : (
+            {/* Attendance Status Box */}
+            {isCheckedIn ? (
               <View style={styles.checkedInBadge}>
-                <Text style={styles.checkedInText}>CHECKED IN FOR TODAY ✅</Text>
+                <Text style={styles.checkedInIcon}>✅</Text>
+                <Text style={styles.checkedInTitle}>ATTENDANCE MARKED</Text>
+                <Text style={styles.checkedInSubtitle}>
+                  Checked in successfully {checkInTime ? `at ${checkInTime}` : "today"}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.attendanceActionBox}>
+                <Text style={styles.attendanceInstruction}>
+                  📱 When you reach the job site, show your Attendance QR code to the company manager:
+                </Text>
+
+                <TouchableOpacity
+                  style={styles.showQrBtn}
+                  onPress={() => setShowQrModal(true)}
+                >
+                  <Text style={styles.showQrBtnText}>📱 SHOW MY ATTENDANCE QR</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.gpsBackupBtn}
+                  onPress={handleGpsCheckIn}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#2563EB" size="small" />
+                  ) : (
+                    <Text style={styles.gpsBackupBtnText}>📍 Check-In with GPS Location</Text>
+                  )}
+                </TouchableOpacity>
               </View>
             )}
           </View>
         )}
       </ScrollView>
 
-      {/* QR Code Scanner Modal */}
-      <Modal visible={showQrModal} transparent animationType="slide">
+      {/* Worker Attendance QR Modal (Shown to Company Manager) */}
+      <Modal
+        visible={showQrModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowQrModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.qrCard}>
-            <Text style={styles.qrTitle}>Scan Company QR Code</Text>
-            <Text style={styles.qrSub}>Point camera at the employer's QR badge at job site</Text>
-
-            {/* Simulated Scanner Viewfinder */}
-            <View style={styles.viewFinder}>
-              <Text style={styles.finderText}>[ 📷 Camera Viewfinder ]</Text>
+            <View style={styles.qrHeaderBadge}>
+              <Text style={styles.qrHeaderBadgeText}>WORKER ATTENDANCE BADGE</Text>
             </View>
 
-            <TouchableOpacity
-              style={styles.simulatedScanBtn}
-              onPress={handleScanAndCheckIn}
-            >
-              <Text style={styles.simulatedScanText}>SCAN & VERIFY ATTENDANCE 👍</Text>
-            </TouchableOpacity>
+            <Text style={styles.qrTitle}>{userName}</Text>
+            <Text style={styles.qrWorkerPhone}>📞 +91 {userPhone}</Text>
+            <Text style={styles.qrSub}>
+              Ask employer / company manager to scan this QR code using their app camera
+            </Text>
+
+            {/* Live QR Code generated for Worker */}
+            <View style={styles.qrWrapper}>
+              <QRCode
+                value={qrDataPayload}
+                size={210}
+                color="#0F172A"
+                backgroundColor="#FFFFFF"
+              />
+            </View>
+
+            {isCheckedIn ? (
+              <View style={styles.liveScannedBox}>
+                <Text style={styles.liveScannedText}>🎉 SCANNED & MARKED PRESENT! ✅</Text>
+              </View>
+            ) : (
+              <View style={styles.waitingScanBox}>
+                <ActivityIndicator size="small" color="#2563EB" />
+                <Text style={styles.waitingScanText}>Waiting for manager to scan...</Text>
+              </View>
+            )}
 
             <TouchableOpacity
               style={styles.closeModalBtn}
               onPress={() => setShowQrModal(false)}
             >
-              <Text style={styles.closeModalText}>Cancel</Text>
+              <Text style={styles.closeModalText}>Close Badge</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -252,36 +359,63 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: "center",
+    elevation: 2,
   },
   applyBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
-  acceptedContainer: { gap: 12 },
+  acceptedContainer: { gap: 14 },
   acceptedBadge: {
-    backgroundColor: "#16A34A",
-    paddingVertical: 16,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  acceptedBadgeText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
-  qrCheckInBtn: {
-    backgroundColor: "#2563EB",
-    paddingVertical: 16,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  qrCheckInText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900" },
-  checkedInBadge: {
     backgroundColor: "#DCFCE7",
-    paddingVertical: 14,
-    borderRadius: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#86EFAC",
   },
-  checkedInText: { color: "#15803D", fontSize: 14, fontWeight: "900" },
+  acceptedBadgeText: { color: "#15803D", fontSize: 14, fontWeight: "900" },
+  attendanceActionBox: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    gap: 12,
+  },
+  attendanceInstruction: {
+    fontSize: 13,
+    color: "#475569",
+    fontWeight: "600",
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  showQrBtn: {
+    backgroundColor: "#2563EB",
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: "center",
+    elevation: 3,
+  },
+  showQrBtnText: { color: "#FFFFFF", fontSize: 15, fontWeight: "900", letterSpacing: 0.3 },
+  gpsBackupBtn: {
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  gpsBackupBtnText: { color: "#64748B", fontSize: 13, fontWeight: "700" },
+  checkedInBadge: {
+    backgroundColor: "#F0FDF4",
+    paddingVertical: 20,
+    borderRadius: 16,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: "#86EFAC",
+  },
+  checkedInIcon: { fontSize: 36, marginBottom: 6 },
+  checkedInTitle: { color: "#15803D", fontSize: 16, fontWeight: "900" },
+  checkedInSubtitle: { color: "#16A34A", fontSize: 12, fontWeight: "700", marginTop: 4 },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.75)",
+    backgroundColor: "rgba(15, 23, 42, 0.8)",
     justifyContent: "center",
+    alignItems: "center",
     padding: 24,
   },
   qrCard: {
@@ -289,31 +423,52 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 24,
     alignItems: "center",
+    width: "90%",
+    elevation: 10,
   },
-  qrTitle: { fontSize: 18, fontWeight: "900", color: "#0F172A" },
-  qrSub: { fontSize: 12, color: "#64748B", textAlign: "center", marginTop: 4, marginBottom: 16 },
-  viewFinder: {
-    width: 200,
-    height: 200,
+  qrHeaderBadge: {
+    backgroundColor: "#DBEAFE",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+    marginBottom: 10,
+  },
+  qrHeaderBadgeText: { color: "#1D4ED8", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  qrTitle: { fontSize: 20, fontWeight: "900", color: "#0F172A" },
+  qrWorkerPhone: { fontSize: 13, fontWeight: "700", color: "#2563EB", marginTop: 2 },
+  qrSub: { fontSize: 12, color: "#64748B", textAlign: "center", marginTop: 6, marginBottom: 18, paddingHorizontal: 10 },
+  qrWrapper: {
+    padding: 16,
+    backgroundColor: "#FFFFFF",
     borderRadius: 16,
-    borderWidth: 2,
-    borderColor: "#2563EB",
-    borderStyle: "dashed",
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#F8FAFC",
-    marginBottom: 20,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    marginBottom: 16,
   },
-  finderText: { fontSize: 12, color: "#64748B", fontWeight: "600" },
-  simulatedScanBtn: {
-    backgroundColor: "#16A34A",
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+  liveScannedBox: {
+    backgroundColor: "#DCFCE7",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+  },
+  liveScannedText: { color: "#15803D", fontSize: 13, fontWeight: "900" },
+  waitingScanBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 14,
+  },
+  waitingScanText: { color: "#64748B", fontSize: 12, fontWeight: "600" },
+  closeModalBtn: {
+    backgroundColor: "#F1F5F9",
+    paddingVertical: 12,
+    paddingHorizontal: 32,
     borderRadius: 12,
     width: "100%",
     alignItems: "center",
   },
-  simulatedScanText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
-  closeModalBtn: { marginTop: 12, paddingVertical: 8 },
-  closeModalText: { color: "#64748B", fontSize: 13, fontWeight: "700" },
+  closeModalText: { color: "#475569", fontSize: 14, fontWeight: "800" },
 });

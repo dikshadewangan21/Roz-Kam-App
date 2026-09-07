@@ -55,7 +55,7 @@ async function requestOrderCreation(params: {
   // Option C: Standalone APK Direct Checkout Fallback
   return {
     orderId: "",
-    keyId: "rzp_test_TZ5Xhz8htCInLK",
+    keyId: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "",
     amount: params.amount,
     currency: "INR",
   };
@@ -136,7 +136,7 @@ export const processSalaryPayment = async ({
       description: `Daily Salary Release for Job #${jobId}`,
       image: "https://rozkaam.app/logo.png",
       currency: "INR",
-      key: keyId || "rzp_test_TZ5Xhz8htCInLK",
+      key: keyId || process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "",
       amount: Math.round(amount * 100), // Amount in paise
       name: companyName || "RozKaam Employer",
       prefill: {

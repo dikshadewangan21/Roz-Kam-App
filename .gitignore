@@ -31,7 +31,11 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
+*.key.csv
+*.csv
 
 # typescript
 *.tsbuildinfo
@@ -52,3 +56,5 @@ android/app/.cxx/
 android/local.properties
 backend/node_modules/
 backend/.env
+backend/.env.*
+!backend/.env.example

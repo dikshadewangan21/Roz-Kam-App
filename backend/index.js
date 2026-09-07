@@ -27,15 +27,17 @@ if (!admin.apps.length) {
 
 const db = admin.apps.length ? admin.firestore() : null;
 
-// Initialize Razorpay client with server-side credentials
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "rzp_test_TZ5Xhz8htCInLK";
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "MaoVhuLrgjOSg0XNjMHZ8kGo";
+// Initialize Razorpay client with server-side environment credentials
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
 
-const razorpay = new Razorpay({
-  key_id: RAZORPAY_KEY_ID,
-  key_secret: RAZORPAY_KEY_SECRET,
-});
+const razorpay = (RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET)
+  ? new Razorpay({
+      key_id: RAZORPAY_KEY_ID,
+      key_secret: RAZORPAY_KEY_SECRET,
+    })
+  : null;
 
 /**
  * 1. Server-Side Order Creation Logic

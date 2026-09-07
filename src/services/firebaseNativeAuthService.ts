@@ -135,7 +135,7 @@ export async function sendFirebaseSMSOTP(phoneNumber: string): Promise<{
 
   // Branch 3: Firebase Identity Toolkit REST API
   try {
-    const apiKey = "AIzaSyCiWCcIEJaVV6LPrD0c_0sPBmQwkk95OcQ";
+    const apiKey = process.env.EXPO_PUBLIC_FIREBASE_API_KEY || "";
     const response = await fetch(
       `https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=${apiKey}`,
       {
@@ -228,7 +228,7 @@ export async function verifyFirebaseSMSOTP(
   // Branch 2: Firebase REST Identity Toolkit signInWithPhoneNumber
   if (activeConfirmationResult && activeConfirmationResult.sessionInfo) {
     try {
-      const apiKey = "AIzaSyCiWCcIEJaVV6LPrD0c_0sPBmQwkk95OcQ";
+      const apiKey = process.env.EXPO_PUBLIC_FIREBASE_API_KEY || "";
       const response = await fetch(
         `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPhoneNumber?key=${apiKey}`,
         {
